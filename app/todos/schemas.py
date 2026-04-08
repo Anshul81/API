@@ -23,6 +23,15 @@ class TodoCreateSchema(Schema):
             validate.Length(max=120, error="Title cannot exceed 120 characters."),
         ]
     )
+
+    notes = fields.String(
+        required=False,
+        validate=[
+            validate.Length(max=250, error="Max 250 characters."),
+        ]
+    )
+
+
     priority = fields.String(
         load_default='medium',      # default if not provided
         validate=validate.OneOf(
@@ -104,6 +113,7 @@ class TodoSchema(Schema):
     priority   = fields.String()
     created_at = fields.String(dump_only=True)
     updated_at = fields.String(dump_only=True)
+    notes      = fields.String()
 
 
 # ══════════════════════════════════════════

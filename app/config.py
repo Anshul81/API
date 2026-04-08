@@ -5,45 +5,51 @@ load_dotenv()
 
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'change_in_production')
-    APP_VERSION = os.environ.get('APP_VERSION', '1.0.0')
-    APP_NAME = 'Flask API Course'
+    SECRET_KEY    = os.getenv('SECRET_KEY', 'change-me-in-production')
+    APP_VERSION   = os.getenv('APP_VERSION', '1.0.0')
+    APP_NAME      = 'Flask API Course'
+    SQLALCHEMY_TRACK_MODIFICATIONS = False   # suppress a noisy warning
 
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 class DevelopmentConfig(Config):
-    """
-    Used when running locally: debug on, verbose logging.
-    Flask reloads automatically when you save a file.
-    """
     DEBUG   = True
     TESTING = False
     ENV     = 'development'
 
+    # SQLite — a single file in the project root.
+    # No server needed, perfect for local dev.
+    SQLALCHEMY_DATABASE_URI = os.getenv(
+        'DATABASE_URL',
+        'sqlite:///todos_dev.db'          # file: instance/todos_dev.db
+    )
+    # Echo SQL to console — invaluable for debugging.
+    # You'll see the exact SQL Flask-SQLAlchemy generates.
+    SQLALCHEMY_ECHO = True
+
 
 class ProductionConfig(Config):
-    """
-    Used on a real server. Debug MUST be False — debug mode
-    exposes an interactive Python shell in the browser on errors.
-    That's a catastrophic security hole in production.
-    """
     DEBUG   = False
     TESTING = False
     ENV     = 'production'
 
+    # PostgreSQL — must be set as an env var in production.
+    # Never hardcode credentials.
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    SQLALCHEMY_ECHO = False
+
 
 class TestingConfig(Config):
-    """
-    Used by pytest in Chapter 12.
-    Separate DB, no real secret keys, fast bcrypt rounds.
-    """
     DEBUG   = False
     TESTING = True
     ENV     = 'testing'
 
+    # Separate in-memory SQLite for tests.
+    # Each test run starts with a blank database —
+    # tests never interfere with your dev data.
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    SQLALCHEMY_ECHO = False
 
-# Map string names to config classes.
-# The app factory uses this dict to look up the right class.
+
 config_map = {
     'development': DevelopmentConfig,
     'production':  ProductionConfig,
