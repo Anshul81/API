@@ -1,12 +1,11 @@
 from datetime import datetime
 from flask import jsonify, request
 from marshmallow import ValidationError
+from sqlalchemy import select
 
+from app.extensions import db
 from app.todos import todos_bp
-from app.todos.models import (
-    make_todo, get_all_todos, get_todo_by_id,
-    save_todo, delete_todo_by_id
-)
+from app.todos.models import Todo
 from app.todos.schemas import (
     todo_schema, todos_schema,
     todo_create_schema, todo_update_schema
@@ -14,7 +13,8 @@ from app.todos.schemas import (
 
 
 def _get_or_404(todo_id: str):
-    todo = get_todo_by_id(todo_id)
+    """Fetch a Todo by primary key or return a 404 response."""
+    todo = db.session.get(Todo, todo_id)
     if todo is None:
         return None, (jsonify({
             'error': f"Todo '{todo_id}' not found.",
@@ -26,47 +26,50 @@ def _get_or_404(todo_id: str):
 # ── LIST ──────────────────────────────────────────────────────
 @todos_bp.route('', methods=['GET'])
 def list_todos():
-    result = get_all_todos()
+    """
+    Build a query using SQLAlchemy's select().
+    Filters are chained onto the query before execution —
+    only one SQL query hits the database no matter how
+    many filters are applied.
+    """
+    stmt = select(Todo).order_by(Todo.created_at.desc())
 
+    # Filter by ?done=true or ?done=false
     done_filter = request.args.get('done')
     if done_filter is not None:
         is_done = done_filter.lower() == 'true'
-        result  = [t for t in result if t['done'] == is_done]
+        stmt    = stmt.where(Todo.done == is_done)
 
+    # Filter by ?priority=high|medium|low
     priority_filter = request.args.get('priority')
     if priority_filter:
-        result = [t for t in result if t['priority'] == priority_filter]
+        stmt = stmt.where(Todo.priority == priority_filter)
+
+    # Execute the query — scalars() unwraps the Row wrappers
+    todos = db.session.execute(stmt).scalars().all()
 
     return jsonify({
-        'todos': todos_schema.dump(result),   # ← serialise through schema
-        'count': len(result)
+        'todos': todos_schema.dump([t.to_dict() for t in todos]),
+        'count': len(todos)
     }), 200
 
 
 # ── CREATE ────────────────────────────────────────────────────
 @todos_bp.route('', methods=['POST'])
 def create_todo():
-    """
-    schema.load() does three things in one call:
-      1. Parses the raw dict from request.get_json()
-      2. Validates every field against the schema rules
-      3. Applies defaults (priority = 'medium' if not sent)
-
-    If validation fails → raises ValidationError →
-    caught by the global handler in errors.py → 422 response.
-    Your handler below only runs on clean, valid data.
-    """
     raw_data = request.get_json()
     if not raw_data:
         return jsonify({'error': 'Request body must be JSON.', 'code': 'BAD_REQUEST'}), 400
 
-    # This single line replaces all your manual validation
     data = todo_create_schema.load(raw_data)
 
-    todo = make_todo(data['title'], data['priority'])
-    save_todo(todo)
+    # Instantiate the model — SQLAlchemy sets defaults (id, created_at, etc.)
+    todo = Todo(title=data['title'], priority=data['priority'], notes=data['notes'])
 
-    return jsonify(todo_schema.dump(todo)), 201
+    db.session.add(todo)      # stage the INSERT
+    db.session.commit()       # write to database
+
+    return jsonify(todo_schema.dump(todo.to_dict())), 201
 
 
 # ── GET ONE ───────────────────────────────────────────────────
@@ -76,7 +79,7 @@ def get_todo(todo_id):
     if err:
         return err
 
-    return jsonify(todo_schema.dump(todo)), 200
+    return jsonify(todo_schema.dump(todo.to_dict())), 200
 
 
 # ── REPLACE (PUT) ─────────────────────────────────────────────
@@ -90,23 +93,21 @@ def replace_todo(todo_id):
     if not raw_data:
         return jsonify({'error': 'Request body must be JSON.', 'code': 'BAD_REQUEST'}), 400
 
-    # For PUT we use TodoUpdateSchema but enforce title is present manually.
-    # Why not TodoCreateSchema? Because 'done' is also a valid PUT field,
-    # and TodoCreateSchema doesn't know about 'done'.
     data = todo_update_schema.load(raw_data)
 
     if 'title' not in data:
         raise ValidationError({'title': ['Title is required for a full replace (PUT).']})
 
-    updated = {
-        **todo,
-        'title':      data['title'],
-        'done':       data.get('done', todo['done']),
-        'priority':   data.get('priority', todo['priority']),
-        'updated_at': datetime.utcnow().isoformat() + 'Z',
-    }
-    save_todo(updated)
-    return jsonify(todo_schema.dump(updated)), 200
+    # Directly set attributes on the ORM object.
+    # SQLAlchemy tracks changes — on commit it generates
+    # an UPDATE only for the columns that actually changed.
+    todo.title    = data['title']
+    todo.done     = data.get('done', todo.done)
+    todo.priority = data.get('priority', todo.priority)
+    # updated_at is handled automatically by onupdate=datetime.utcnow
+
+    db.session.commit()
+    return jsonify(todo_schema.dump(todo.to_dict())), 200
 
 
 # ── PARTIAL UPDATE (PATCH) ────────────────────────────────────
@@ -120,9 +121,6 @@ def update_todo(todo_id):
     if not raw_data:
         return jsonify({'error': 'Request body must be JSON.', 'code': 'BAD_REQUEST'}), 400
 
-    # load() with partial=True means no field is required —
-    # only fields that are present get validated.
-    # This is exactly PATCH semantics.
     data = todo_update_schema.load(raw_data, partial=True)
 
     if not data:
@@ -131,11 +129,12 @@ def update_todo(todo_id):
             'code':  'BAD_REQUEST'
         }), 400
 
-    todo.update(data)
-    todo['updated_at'] = datetime.utcnow().isoformat() + 'Z'
-    save_todo(todo)
+    # Only set the attributes that were actually sent
+    for field, value in data.items():
+        setattr(todo, field, value)
 
-    return jsonify(todo_schema.dump(todo)), 200
+    db.session.commit()
+    return jsonify(todo_schema.dump(todo.to_dict())), 200
 
 
 # ── DELETE ────────────────────────────────────────────────────
@@ -145,5 +144,6 @@ def delete_todo(todo_id):
     if err:
         return err
 
-    delete_todo_by_id(todo_id)
+    db.session.delete(todo)   # stage the DELETE
+    db.session.commit()       # write to database
     return '', 204
