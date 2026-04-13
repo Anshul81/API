@@ -11,20 +11,17 @@ from app.todos.schemas import (
     todo_schema, todos_schema,
     todo_create_schema, todo_update_schema
 )
+from app.exceptions import NotFoundException, ForbiddenException
 
-
-def _get_or_404(todo_id: str):
-    """Fetch a Todo by primary key or return a 404 response."""
+def _get_or_404(todo_id):
     todo = db.session.get(Todo, todo_id)
     if todo is None:
-        return None, (jsonify({
-            'error': f"Todo '{todo_id}' not found.",
-            'code':  'NOT_FOUND'
-        }), 404)
-    return todo, None
+        raise NotFoundException(f"Todo '{todo_id}' not found.")
+    return todo
 
 def _owns_or_admin(todo, user_id, role):
-    return todo.user_id == user_id or role == 'admin'
+    if todo.user_id != user_id and role != 'admin':
+        raise ForbiddenException("You do not have access to this todo.")
 
 # ── LIST ──────────────────────────────────────────────────────
 @todos_bp.route('', methods=['GET'])
@@ -97,12 +94,9 @@ def create_todo():
 def get_todo(todo_id):
     user_id = get_jwt_identity()
     claims = get_jwt()
-    todo, err = _get_or_404(todo_id)
-    if err:
-        return err
+    todo = _get_or_404(todo_id)
 
-    if not _owns_or_admin(todo, user_id, claims.get('role')):
-        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
+    _owns_or_admin(todo, user_id, claims.get('role'))
 
     return jsonify(todo_schema.dump(todo.to_dict())), 200
 
@@ -113,11 +107,9 @@ def get_todo(todo_id):
 def replace_todo(todo_id):
     user_id = get_jwt_identity()
     claims = get_jwt()
-    todo, err = _get_or_404(todo_id)
-    if err:
-        return err
-    if not _owns_or_admin(todo, user_id, claims.get('role')):
-        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
+    todo = _get_or_404(todo_id)
+
+    _owns_or_admin(todo, user_id, claims.get('role'))
 
     raw_data = request.get_json()
     if not raw_data:
@@ -146,11 +138,8 @@ def replace_todo(todo_id):
 def update_todo(todo_id):
     user_id = get_jwt_identity()
     claims = get_jwt()
-    todo, err = _get_or_404(todo_id)
-    if err:
-        return err
-    if not _owns_or_admin(todo, user_id, claims.get('role')):
-        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
+    todo = _get_or_404(todo_id)
+    _owns_or_admin(todo, user_id, claims.get('role'))
 
     raw_data = request.get_json()
     if not raw_data:
@@ -178,11 +167,8 @@ def update_todo(todo_id):
 def delete_todo(todo_id):
     user_id = get_jwt_identity()
     claims = get_jwt()
-    todo, err = _get_or_404(todo_id)
-    if err:
-        return err
-    if not _owns_or_admin(todo, user_id, claims.get('role')):
-        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
+    todo = _get_or_404(todo_id)
+    _owns_or_admin(todo, user_id, claims.get('role'))
 
     db.session.delete(todo)   # stage the DELETE
     db.session.commit()       # write to database

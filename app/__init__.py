@@ -3,7 +3,8 @@ from flask import Flask, jsonify
 from app.config import config_map, DevelopmentConfig
 from app.errors import register_error_handlers
 from app.extensions import db, migrate, jwt
-
+from app.logger import configure_logging
+from app.middleware import register_middleware
 
 def create_app(config_name: str = 'development') -> Flask:
     app = Flask(__name__)
@@ -12,6 +13,8 @@ def create_app(config_name: str = 'development') -> Flask:
     config_class = config_map.get(config_name, DevelopmentConfig)
     app.config.from_object(config_class)
 
+    configure_logging(app)
+
     # ── Initialise extensions ─────────────────────────
     # init_app() binds the extension to this specific app instance.
     # This is what makes the factory pattern work — same db object,
@@ -19,6 +22,8 @@ def create_app(config_name: str = 'development') -> Flask:
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+
+    register_middleware(app)
 
     # ── Error handlers ────────────────────────────────
     register_error_handlers(app)
@@ -50,3 +55,4 @@ def create_app(config_name: str = 'development') -> Flask:
         }), 200
 
     return app
+
