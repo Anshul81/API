@@ -20,6 +20,13 @@ class Todo(db.Model):
     # nullable=False — database-side NOT NULL constraint
     # index=True     — creates a DB index for faster lookups
 
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', name='fk_todos_user_id'),
+        nullable=True,
+        index=True
+    )
+
     id = db.Column(
         db.String(36),
         primary_key=True,
@@ -77,6 +84,7 @@ class Todo(db.Model):
             'title':      self.title,
             'done':       self.done,
             'priority':   self.priority,
+            'user_id':    self.user_id,
             'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
             'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             'notes':      self.notes

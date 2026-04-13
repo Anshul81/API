@@ -2,7 +2,7 @@ import os
 from flask import Flask, jsonify
 from app.config import config_map, DevelopmentConfig
 from app.errors import register_error_handlers
-from app.extensions import db, migrate
+from app.extensions import db, migrate, jwt
 
 
 def create_app(config_name: str = 'development') -> Flask:
@@ -18,6 +18,7 @@ def create_app(config_name: str = 'development') -> Flask:
     # different app instances (dev app, test app, prod app).
     db.init_app(app)
     migrate.init_app(app, db)
+    jwt.init_app(app)
 
     # ── Error handlers ────────────────────────────────
     register_error_handlers(app)
@@ -25,6 +26,9 @@ def create_app(config_name: str = 'development') -> Flask:
     # ── Blueprints ────────────────────────────────────
     from app.todos import todos_bp
     app.register_blueprint(todos_bp, url_prefix='/todos')
+
+    from app.auth import auth_bp
+    app.register_blueprint(auth_bp, url_prefix='/auth')
 
     # ── Health check ──────────────────────────────────
     @app.route('/ping')

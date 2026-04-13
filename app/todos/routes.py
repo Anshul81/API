@@ -1,8 +1,9 @@
 from datetime import datetime
 from flask import jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from marshmallow import ValidationError
 from sqlalchemy import select
-
+from app.auth.decorator import admin_required
 from app.extensions import db
 from app.todos import todos_bp
 from app.todos.models import Todo
@@ -22,9 +23,12 @@ def _get_or_404(todo_id: str):
         }), 404)
     return todo, None
 
+def _owns_or_admin(todo, user_id, role):
+    return todo.user_id == user_id or role == 'admin'
 
 # ── LIST ──────────────────────────────────────────────────────
 @todos_bp.route('', methods=['GET'])
+@jwt_required()
 def list_todos():
     """
     Build a query using SQLAlchemy's select().
@@ -32,7 +36,15 @@ def list_todos():
     only one SQL query hits the database no matter how
     many filters are applied.
     """
+
+    user_id = get_jwt_identity()
+    claims = get_jwt()
+    role = claims.get('role')
+
     stmt = select(Todo).order_by(Todo.created_at.desc())
+
+    if role != 'admin':
+        stmt = stmt.where(Todo.user_id == user_id)
 
     # Filter by ?done=true or ?done=false
     done_filter = request.args.get('done')
@@ -56,7 +68,10 @@ def list_todos():
 
 # ── CREATE ────────────────────────────────────────────────────
 @todos_bp.route('', methods=['POST'])
+@jwt_required()
 def create_todo():
+    user_id = get_jwt_identity()
+
     raw_data = request.get_json()
     if not raw_data:
         return jsonify({'error': 'Request body must be JSON.', 'code': 'BAD_REQUEST'}), 400
@@ -64,7 +79,11 @@ def create_todo():
     data = todo_create_schema.load(raw_data)
 
     # Instantiate the model — SQLAlchemy sets defaults (id, created_at, etc.)
-    todo = Todo(title=data['title'], priority=data['priority'], notes=data['notes'])
+    todo = Todo(
+        title=data['title'],
+        priority=data['priority'],
+        notes=data['notes'],
+        user_id=user_id)
 
     db.session.add(todo)      # stage the INSERT
     db.session.commit()       # write to database
@@ -74,20 +93,31 @@ def create_todo():
 
 # ── GET ONE ───────────────────────────────────────────────────
 @todos_bp.route('/<string:todo_id>', methods=['GET'])
+@jwt_required()
 def get_todo(todo_id):
+    user_id = get_jwt_identity()
+    claims = get_jwt()
     todo, err = _get_or_404(todo_id)
     if err:
         return err
+
+    if not _owns_or_admin(todo, user_id, claims.get('role')):
+        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
 
     return jsonify(todo_schema.dump(todo.to_dict())), 200
 
 
 # ── REPLACE (PUT) ─────────────────────────────────────────────
 @todos_bp.route('/<string:todo_id>', methods=['PUT'])
+@jwt_required()
 def replace_todo(todo_id):
+    user_id = get_jwt_identity()
+    claims = get_jwt()
     todo, err = _get_or_404(todo_id)
     if err:
         return err
+    if not _owns_or_admin(todo, user_id, claims.get('role')):
+        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
 
     raw_data = request.get_json()
     if not raw_data:
@@ -112,10 +142,15 @@ def replace_todo(todo_id):
 
 # ── PARTIAL UPDATE (PATCH) ────────────────────────────────────
 @todos_bp.route('/<string:todo_id>', methods=['PATCH'])
+@jwt_required()
 def update_todo(todo_id):
+    user_id = get_jwt_identity()
+    claims = get_jwt()
     todo, err = _get_or_404(todo_id)
     if err:
         return err
+    if not _owns_or_admin(todo, user_id, claims.get('role')):
+        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
 
     raw_data = request.get_json()
     if not raw_data:
@@ -139,10 +174,15 @@ def update_todo(todo_id):
 
 # ── DELETE ────────────────────────────────────────────────────
 @todos_bp.route('/<string:todo_id>', methods=['DELETE'])
+@jwt_required()
 def delete_todo(todo_id):
+    user_id = get_jwt_identity()
+    claims = get_jwt()
     todo, err = _get_or_404(todo_id)
     if err:
         return err
+    if not _owns_or_admin(todo, user_id, claims.get('role')):
+        return jsonify({'error': "Access Denied", 'code': 'FORBIDDEN'}), 403
 
     db.session.delete(todo)   # stage the DELETE
     db.session.commit()       # write to database
